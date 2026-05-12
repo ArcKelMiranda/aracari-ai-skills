@@ -23,7 +23,6 @@ step-01-openclaw/
 │   └── docker-compose.yml     # Configuración Docker (bind loopback)
 └── scripts/
     ├── setup-vps.sh          # Script de instalación en VPS
-    └── setup-channels.sh     # Script de configuración de canales
 ```
 
 ## ⚠️ Seguridad — "Ask Before Everything"
@@ -31,23 +30,19 @@ step-01-openclaw/
 Por defecto, OpenClaw puede ejecutar acciones automáticamente. Para máxima seguridad,
 queremos que **SIEMPRE pregunte antes de hacer algo**.
 
-### Configuración clave:
+### Configuración clave (actual):
 
 ```json
 {
-  tools: {
-    exec: {
-      ask: "always",      // SIEMPRE pregunta antes de ejecutar
-      security: "deny"    // Deniega por defecto
-    }
-  },
+  gateway: { bind: "loopback" },
+  tools: { profile: "messaging" },
   channels: {
     telegram: { dmPolicy: "pairing" },   // Nadie escribe sin aprobación
     whatsapp: { dmPolicy: "pairing" }
   },
   agents: {
     defaults: {
-      sandbox: { mode: "all" }  // Aislamiento total
+      sandbox: { mode: "off" }  // Compatibilidad local con Docker en contenedor
     }
   }
 }

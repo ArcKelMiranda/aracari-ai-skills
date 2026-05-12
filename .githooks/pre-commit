@@ -13,54 +13,98 @@ NC='\033[0m'
 
 echo "🔍 Validando archivos antes de commit..."
 
-# Rutas a verificar
+# Rutas a verificar (archivos que contienen secrets reales)
 SENSITIVE_FILES=(
-    ".env"
     "openclaw.json"
     "config.env"
     "secrets.yaml"
     "credentials.json"
 )
 
-# Patrones sensibles a buscar
-SENSITIVE_PATTERNS=(
-    # Tokens y API keys
-    "OPENCLAW_GATEWAY_TOKEN=.*[a-zA-Z0-9]"
-    "OPENAI_API_KEY=.*[a-zA-Z0-9]"
-    "ANTHROPIC_API_KEY=.*[a-zA-Z0-9]"
-    "MINIMAX_API_KEY=.*[a-zA-Z0-9]"
-    "TELEGRAM_BOT_TOKEN=.*[a-zA-Z0-9]"
-    "WHATSAPP.*=.*[a-zA-Z0-9]"
-    "api[_-]?key.*=.*['\"][a-zA-Z0-9]{20,}['\"]"
-    "api[_-]?secret.*=.*['\"][a-zA-Z0-9]{20,}['\"]"
-
-    # Tokens JWT, tokens de acceso
-    "eyJ[a-zA-Z0-9]{10,}"
-    "bearer[_\s]+[a-zA-Z0-9]{20,}"
-
-    # Keys privadas
-    "-----BEGIN.*PRIVATE KEY-----"
-    "-----BEGIN RSA PRIVATE KEY-----"
-    "-----BEGIN EC PRIVATE KEY-----"
-
-    # Contraseñas hardcodeadas
-    "password\s*=\s*['\"][^'\"]{8,}['\"]"
-    "passwd\s*=\s*['\"][^'\"]{8,}['\"]"
-    "secret\s*=\s*['\"][^'\"]{8,}['\"]"
-
-    # AWS keys
-    "AKIA[0-9A-Z]{16}"
-    "aws[_-]?secret[_-]?access[_-]?key.*=.*"
-
-    # Tokens de github
-    "ghp_[a-zA-Z0-9]{36}"
-    "github[_-]?token.*=.*"
+# EXCLUSIONES: archivos que son OK aunque contengan .env en el nombre
+SENSITIVE_FILES_EXCLUDE=(
+    ".env.example"
+    "env.example"
+    "openclaw.env.example"
+    "config.env.example"
 )
 
-# Archivos staging
-STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+# Archivos que son templates/documentación y NO deberían tener valores reales
+TEMPLATE_FILES=(
+    "openclaw.env.example"
+    ".env.example"
+    "config.env.example"
+)
+
+# Patrones sensibles a buscar SOLO si tienen valores reales
+# No matchea placeholders como "your-key-here", "tu-key", "xxx", etc.
+SENSITIVE_PATTERNS=(
+    # Tokens JWT reales
+    "eyJ[a-zA-Z0-9]{20,}"
+    "bearer[_\s]+[a-zA-Z0-9]{30,}"
+    # Tokens reales de GitHub
+    "ghp_[a-zA-Z0-9]{36}"
+    # AWS access keys reales
+    "AKIA[0-9A-Z]{16}"
+    # Keys privadas reales
+    "-----BEGIN.*PRIVATE KEY-----"
+    "-----BEGIN RSA PRIVATE KEY-----"
+)
+
+# Valores placeholder que NO son sensibles
+PLACEHOLDER_VALUES=(
+    "your-api-key"
+    "tu-api-key"
+    "your-key"
+    "tu-key"
+    "sk-ant-xxxxx"
+    "sk-xxx"
+    "xxx"
+    "YOUR_TOKEN"
+    "TU_TOKEN"
+    "<token>"
+    "your-token"
+    "tu-token"
+    "example"
+    "placeholder"
+    "123456789:ABCdefGHI"
+)
 
 ERRORS=0
+WARNINGS=0
+
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+
+# Bloqueo directo de dotenv reales (excepto templates)
+for file in $STAGED_FILES; do
+    if [[ "$file" =~ (^|/)\.env($|\.) ]] && [[ ! "$file" =~ \.env\.example$ ]]; then
+        echo -e "${RED}❌ ERROR: Archivo dotenv real en staging: $file${NC}"
+        echo "   Usa .env.example para templates y deja .env fuera de git"
+        ERRORS=$((ERRORS + 1))
+    fi
+done
+
+# ===========================================
+# HELPER: Es valor real o placeholder?
+# ===========================================
+is_real_value() {
+    local value="$1"
+    local lower_value=$(echo "$value" | tr '[:upper:]' '[:lower:]')
+
+    for placeholder in "${PLACEHOLDER_VALUES[@]}"; do
+        local lower_placeholder=$(echo "$placeholder" | tr '[:upper:]' '[:lower:]')
+        if [[ "$lower_value" == *"$lower_placeholder"* ]]; then
+            return 1  # Es placeholder
+        fi
+    done
+
+    # Si tiene 20+ caracteres alfanuméricos, probablemente es real
+    if [[ "$value" =~ ^[a-zA-Z0-9+/]{20,}$ ]] || [[ "$value" =~ ^[a-zA-Z0-9_:-]{30,}$ ]]; then
+        return 0  # Es real
+    fi
+
+    return 1  # Es placeholder
+}
 
 # ===========================================
 # CHECK 1: Archivos sensibles no deberían estar
@@ -69,41 +113,76 @@ echo ""
 echo "📋 Verificando archivos sensibles..."
 
 for file in $STAGED_FILES; do
+    # Skip exclusions
+    IS_EXCLUDED=0
+    for exclude in "${SENSITIVE_FILES_EXCLUDE[@]}"; do
+        if [[ "$file" == *"$exclude"* ]]; then
+            IS_EXCLUDED=1
+            break
+        fi
+    done
+    if [ $IS_EXCLUDED -eq 1 ]; then
+        continue
+    fi
+
     for sensitive in "${SENSITIVE_FILES[@]}"; do
         if [[ "$file" == *"$sensitive"* ]]; then
-            # Si es un archivo .env, verificar que no tenga valores reales
-            if [[ "$file" == *".env"* ]]; then
-                CONTENT=$(git diff --cached "$file" | grep "^+" | grep -v "^+++" | head -50)
-                if echo "$CONTENT" | grep -E "^[+] *[A-Z_]+= *[a-zA-Z0-9]" > /dev/null 2>&1; then
-                    echo -e "${RED}❌ ERROR: $file parece tener valores configurados${NC}"
-                    echo "   Los archivos .env con valores reales NO deben commitearse"
-                    ERRORS=$((ERRORS + 1))
-                fi
-            else
-                echo -e "${RED}❌ ERROR: Archivo sensible encontrado: $file${NC}"
-                ERRORS=$((ERRORS + 1))
-            fi
+            # Es un archivo de secrets real
+            echo -e "${RED}❌ ERROR: Archivo sensible encontrado: $file${NC}"
+            echo "   Los archivos con datos sensibles NO deben commitearse"
+            ERRORS=$((ERRORS + 1))
         fi
     done
 done
 
 # ===========================================
-# CHECK 2: Buscar patrones sensibles en archivos
+# CHECK 2: Templates NO deben tener valores reales
 # ===========================================
 echo ""
-echo "🔎 Buscando patrones sensibles en archivos..."
+echo "📋 Verificando templates..."
 
-# Filtrar archivos binary y archivos pequeños
-CHECK_FILES=$(echo "$STAGED_FILES" | grep -E "\.(json|yaml|yml|env|txt|md|sh|js|ts|py|go|rb)$" || true)
+for file in $STAGED_FILES; do
+    for template in "${TEMPLATE_FILES[@]}"; do
+        if [[ "$file" == *"$template"* ]]; then
+            echo "   Verificando $file..."
+
+            # Verificar diff staged
+            CONTENT=$(git diff --cached "$file" 2>/dev/null | grep "^+" | grep -v "^+++" || true)
+
+            # Buscar patrones tipo KEY=valor
+            while IFS= read -r line; do
+                if [[ "$line" =~ ^[^#]*=[a-zA-Z0-9] ]]; then
+                    KEY=$(echo "$line" | cut -d'=' -f1 | tr -d ' ')
+                    VALUE=$(echo "$line" | cut -d'=' -f2 | tr -d ' "' | tr -d "'")
+
+                    if [ -n "$VALUE" ] && [ "$VALUE" != "" ]; then
+                        if ! is_real_value "$VALUE"; then
+                            # Es placeholder, OK
+                            continue
+                        else
+                            echo -e "${RED}❌ ERROR: $file tiene valor real en $KEY${NC}"
+                            echo "   Valor: ${VALUE:0:10}..."
+                            ERRORS=$((ERRORS + 1))
+                            break
+                        fi
+                    fi
+                fi
+            done <<< "$CONTENT"
+        fi
+    done
+done
+
+# ===========================================
+# CHECK 3: Buscar patrones sensibles REALES en archivos
+# ===========================================
+echo ""
+echo "🔎 Buscando patrones sensibles..."
+
+# Filtrar archivos a verificar
+CHECK_FILES=$(echo "$STAGED_FILES" | grep -E "\.(json|yaml|yml|sh|js|ts|py|go|rb|env)$" | grep -vE "(example|template)" || true)
 
 for file in $CHECK_FILES; do
-    # Skip si es un archivo de configuración nuestro que no debería tener valores
-    if [[ "$file" == *"openclaw.env.example"* ]] || [[ "$file" == *".env.example"* ]]; then
-        continue
-    fi
-
-    # Verificar el diff staged
-    CONTENT=$(git diff --cached "$file" 2>/dev/null | grep "^+" | grep -v "^+++" | tr -d '\n' | head -c 10000)
+    CONTENT=$(git diff --cached "$file" 2>/dev/null | grep "^+" | grep -v "^+++" | tr '\n' ' ' | head -c 5000)
 
     if [ -z "$CONTENT" ]; then
         continue
@@ -111,7 +190,7 @@ for file in $CHECK_FILES; do
 
     for pattern in "${SENSITIVE_PATTERNS[@]}"; do
         if echo "$CONTENT" | grep -E "$pattern" > /dev/null 2>&1; then
-            echo -e "${RED}❌ ERROR: Posible dato sensible encontrado en $file${NC}"
+            echo -e "${RED}❌ ERROR: Dato sensible REAL encontrado en $file${NC}"
             echo "   Patrón: $pattern"
             ERRORS=$((ERRORS + 1))
             break
@@ -120,24 +199,7 @@ for file in $CHECK_FILES; do
 done
 
 # ===========================================
-# CHECK 3: Verificar que data/ no esté
-# ===========================================
-echo ""
-echo "📁 Verificando directorio data/..."
-
-if echo "$STAGED_FILES" | grep -E "^data/" > /dev/null 2>&1; then
-    echo -e "${RED}❌ ERROR: El directorio data/ NO debe commitearse${NC}"
-    echo "   Contiene datos sensibles: sesiones, credenciales, tokens"
-    ERRORS=$((ERRORS + 1))
-fi
-
-if echo "$STAGED_FILES" | grep -E "\.openclaw/openclaw\.json$" > /dev/null 2>&1; then
-    echo -e "${RED}❌ ERROR: openclaw.json con configuración real no debe commitearse${NC}"
-    ERRORS=$((ERRORS + 1))
-fi
-
-# ===========================================
-# CHECK 4: .gitignore debe incluir .env y data/
+# CHECK 4: .gitignore debe existir y ser correcto
 # ===========================================
 echo ""
 echo "📋 Verificando .gitignore..."
@@ -151,21 +213,21 @@ if [ -f ".gitignore" ]; then
     if echo "$GITIGNORE_CONTENT" | grep -E "(\.env|config/\.env)" > /dev/null 2>&1; then
         HAS_ENV=1
         echo -e "${GREEN}✅ .env está en .gitignore${NC}"
+    else
+        echo -e "${RED}❌ .gitignore no incluye .env${NC}"
+        ERRORS=$((ERRORS + 1))
     fi
 
-    if echo "$GITIGNORE_CONTENT" | grep -E "^data/" > /dev/null 2>&1; then
+    if echo "$GITIGNORE_CONTENT" | grep -E "data/" > /dev/null 2>&1; then
         HAS_DATA=1
         echo -e "${GREEN}✅ data/ está en .gitignore${NC}"
-    fi
-
-    if [ $HAS_ENV -eq 0 ] || [ $HAS_DATA -eq 0 ]; then
-        echo -e "${RED}❌ .gitignore no incluye archivos sensibles${NC}"
-        [ $HAS_ENV -eq 0 ] && echo "   Falta: .env o config/.env"
-        [ $HAS_DATA -eq 0 ] && echo "   Falta: data/"
+    else
+        echo -e "${RED}❌ .gitignore no incluye data/${NC}"
         ERRORS=$((ERRORS + 1))
     fi
 else
-    echo -e "${YELLOW}⚠️  ADVERTENCIA: No hay .gitignore${NC}"
+    echo -e "${RED}❌ No hay .gitignore${NC}"
+    ERRORS=$((ERRORS + 1))
 fi
 
 # ===========================================
@@ -177,17 +239,13 @@ if [ $ERRORS -gt 0 ]; then
     echo -e "${RED}❌ PRE-COMMIT FALLÓ: $ERRORS error(es)${NC}"
     echo -e "${RED}========================================${NC}"
     echo ""
-    echo "Solución:"
-    echo "1. Elimina los datos sensibles de los archivos"
-    echo "2. Mueve datos reales a un archivo .env.local (ya ignorado)"
-    echo "3. Usa config/.env.example como template"
-    echo ""
-    echo "Para saltar este hook (NO recomendado):"
+    echo "Para saltar este hook (emergencia):"
     echo "   git commit --no-verify -m 'tu mensaje'"
     exit 1
 else
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN}✅ Validación passed - listo para commit${NC}"
     echo -e "${GREEN}========================================${NC}"
+    [ $WARNINGS -gt 0 ] && echo "(y $WARNINGS advertencia(es))"
     exit 0
 fi

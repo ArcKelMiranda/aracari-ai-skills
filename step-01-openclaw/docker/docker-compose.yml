@@ -5,14 +5,14 @@ services:
     restart: unless-stopped
     # read_only: true  # Deshabilitado para test local - en VPS usar tmpfs
     ports:
-      - "127.0.0.1:18789:18789"  # SOLO localhost
+      - "127.0.0.1:18789:18789"  # Seguridad por defecto: solo localhost
     environment:
       - OPENCLAW_GATEWAY_MODE=local
       - OPENCLAW_GATEWAY_BIND=loopback
       - OPENCLAW_DISABLE_BONJOUR=1
     volumes:
-      - ./data/.openclaw:/home/node/.openclaw
-      - ./data/workspace:/home/node/.openclaw/workspace
+      - ../data/.openclaw:/home/node/.openclaw
+      - ../data/workspace:/home/node/.openclaw/workspace
       - tmp_data:/tmp/openclaw
     env_file:
       - ../config/.env
@@ -40,8 +40,8 @@ services:
     env_file:
       - ../config/.env
     volumes:
-      - ./data/.openclaw:/home/node/.openclaw
-      - ./data/workspace:/home/node/.openclaw/workspace
+      - ../data/.openclaw:/home/node/.openclaw
+      - ../data/workspace:/home/node/.openclaw/workspace
     networks:
       - openclaw-net
     entrypoint: ["node", "dist/index.js"]

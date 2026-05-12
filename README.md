@@ -9,7 +9,7 @@
 Instalación, configuración y entendimiento de OpenClaw como asistente AI personal en VPS Ubuntu con Docker. Conexión de canales Telegram y WhatsApp.
 
 ### Temas cubiertos:
-- [x] ¿Qué es OpenClaw?](./step-01-openclaw/docs/que-es-openclaw.md)
+- [x] [¿Qué es OpenClaw?](./step-01-openclaw/docs/que-es-openclaw.md)
 - [x] [API directa vs Plan existente](./step-01-openclaw/docs/api-vs-suscripcion.md)
 - [x] [Setup Telegram](./step-01-openclaw/docs/telegram-setup.md)
 - [x] [Setup WhatsApp](./step-01-openclaw/docs/whatsapp-setup.md)
