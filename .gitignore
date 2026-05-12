@@ -1,0 +1,27 @@
+# Security: Never commit secrets!
+config/.env
+
+# Data directories (contain session data, credentials)
+data/
+step-01-openclaw/data/
+step-01-openclaw/docker/data/
+
+# Docker volumes (if used)
+volumes/
+docker/volumes/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Docker volumes (if used)
+# volumes/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
